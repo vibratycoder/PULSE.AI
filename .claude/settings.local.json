@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s http://localhost:3000 -o /dev/null -w \"%{http_code}\")",
+      "Bash(tasklist)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill:*)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''''\\\\n''''.join\\(d.get\\(''''paths'''',{}\\).keys\\(\\)\\)\\)\")"
+    ]
+  }
+}
