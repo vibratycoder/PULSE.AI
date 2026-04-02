@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "PulseAI",
+    "slug": "pulseai-mobile",
+    "scheme": "pulseai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b1929"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pulseai.mobile",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "PulseAI reads your health data to display heart rate, activity, sleep, and workout metrics from your Apple Watch and Health app.",
+        "NSHealthUpdateUsageDescription": "PulseAI does not write health data.",
+        "NSBluetoothAlwaysUsageDescription": "Used to connect to your WHOOP or Garmin watch for live heart rate data.",
+        "NSBluetoothPeripheralUsageDescription": "Used to connect to your WHOOP or Garmin watch for live heart rate data."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b1929"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "supabaseUrl": "YOUR_SUPABASE_URL",
+      "supabaseAnonKey": "YOUR_SUPABASE_ANON_KEY"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
+  }
+}

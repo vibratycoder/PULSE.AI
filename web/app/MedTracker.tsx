@@ -2,14 +2,19 @@
 
 import { useState, useCallback } from "react";
 import { PeptideTracker } from "./PeptideTracker";
+import { SteroidTracker } from "./SteroidTracker";
+import { SupplementTracker } from "./SupplementTracker";
+import type { Medication } from "./types";
+import { dateKey, isToday, getWeekDates, DAY_NAMES } from "./utils";
 
-interface Medication {
-  name: string;
-  dosage: string;
-}
+type TimeOfDay = "Morning" | "Afternoon" | "Evening" | "Before Bed";
 
 interface MedLog {
   [dateKey: string]: { [medName: string]: number | boolean };
+}
+
+interface MedTimingMap {
+  [medName: string]: TimeOfDay;
 }
 
 /** Get the dose count for a med on a given day (handles legacy boolean values). */
@@ -21,7 +26,16 @@ function getDoseCount(log: MedLog, day: string, medName: string): number {
 }
 
 const STORAGE_KEY = "pulseai_medlog";
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const TIMING_KEY = "pulseai_medtiming";
+
+const TIME_OPTIONS: TimeOfDay[] = ["Morning", "Afternoon", "Evening", "Before Bed"];
+
+const TIMING_ICONS: Record<TimeOfDay, string> = {
+  "Morning": "\u2600",
+  "Afternoon": "\u26C5",
+  "Evening": "\uD83C\uDF19",
+  "Before Bed": "\uD83D\uDCA4",
+};
 
 /** Parse a dosage string to determine how many doses per week are expected. */
 function parseDosesPerWeek(dosage: string): number {
@@ -33,21 +47,47 @@ function parseDosesPerWeek(dosage: string): number {
   if (d.includes("3x weekly") || d.includes("three times a week") || d.includes("3 times a week")) return 3;
   if (d.includes("twice weekly") || d.includes("2x weekly") || d.includes("twice a week")) return 2;
   if (d.includes("weekly") || d.includes("once a week") || d.includes("once weekly")) return 1;
-  if (d.includes("as needed") || d.includes("prn")) return 0; // no fixed schedule
+  if (d.includes("as needed") || d.includes("prn")) return 0;
   if (d.includes("at bedtime") || d.includes("qhs")) return 7;
-  // Default: assume daily
   return 7;
 }
 
-/** How many doses per day this med expects (for daily checklist logic). */
+/** How many doses per day this med expects. */
 function parseDosesPerDay(dosage: string): number {
   const d = dosage.toLowerCase();
   if (d.includes("3x daily") || d.includes("three times daily") || d.includes("tid")) return 3;
   if (d.includes("twice daily") || d.includes("2x daily") || d.includes("bid")) return 2;
-  if (d.includes("weekly") || d.includes("once a week") || d.includes("once weekly")) return 0; // not every day
+  if (d.includes("weekly") || d.includes("once a week") || d.includes("once weekly")) return 0;
   if (d.includes("every other day") || d.includes("eod")) return 0;
   if (d.includes("as needed") || d.includes("prn")) return 0;
   return 1;
+}
+
+/** Is a medication scheduled on a given date based on its frequency? */
+function isDueOnDate(dosage: string, date: Date): boolean {
+  const d = dosage.toLowerCase();
+  if (d.includes("as needed") || d.includes("prn")) return false;
+  if (d.includes("daily") || d.includes("bid") || d.includes("tid") || d.includes("qd") || d.includes("every day") || d.includes("at bedtime") || d.includes("qhs")) return true;
+  if (d.includes("every other day") || d.includes("eod")) {
+    const dayOfYear = Math.floor((date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000);
+    return dayOfYear % 2 === 0;
+  }
+  const dow = date.getDay();
+  if (d.includes("3x weekly") || d.includes("three times a week") || d.includes("3 times a week")) return [1, 3, 5].includes(dow);
+  if (d.includes("twice weekly") || d.includes("2x weekly") || d.includes("twice a week")) return [1, 4].includes(dow);
+  if (d.includes("weekly") || d.includes("once a week") || d.includes("once weekly")) return dow === 1;
+  return true;
+}
+
+/** Count how many doses are expected in a specific week. */
+function countDueInWeek(dosage: string, weekDates: Date[]): number {
+  if (parseDosesPerWeek(dosage) === 0) return 0;
+  const perDay = Math.max(parseDosesPerDay(dosage), 1);
+  let total = 0;
+  for (const d of weekDates) {
+    if (isDueOnDate(dosage, d)) total += perDay;
+  }
+  return total;
 }
 
 /** Get a frequency label from dosage. */
@@ -73,28 +113,6 @@ interface WeeklyMedAnalysis {
   status: "complete" | "on-track" | "behind" | "missed" | "as-needed" | "extra";
 }
 
-function getWeekDates(weekOffset: number): Date[] {
-  const today = new Date();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay() + weekOffset * 7);
-  const dates: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(startOfWeek);
-    d.setDate(startOfWeek.getDate() + i);
-    dates.push(d);
-  }
-  return dates;
-}
-
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function isToday(d: Date): boolean {
-  const t = new Date();
-  return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
-}
-
 function loadLog(): MedLog {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -109,31 +127,47 @@ function saveLog(log: MedLog) {
   } catch { /* ignore */ }
 }
 
-function getStreakCount(log: MedLog, medNames: string[]): number {
-  if (medNames.length === 0) return 0;
+function loadTimings(): MedTimingMap {
+  try {
+    const saved = localStorage.getItem(TIMING_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch { /* ignore */ }
+  return {};
+}
+
+function saveTimings(timings: MedTimingMap) {
+  try {
+    localStorage.setItem(TIMING_KEY, JSON.stringify(timings));
+  } catch { /* ignore */ }
+}
+
+function getStreakCount(log: MedLog, medications: Medication[]): number {
+  const scheduled = medications.filter((m) => parseDosesPerWeek(m.dosage) > 0);
+  if (scheduled.length === 0) return 0;
   let streak = 0;
-  const today = new Date();
+  const d = new Date();
   for (let i = 0; i < 365; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const key = dateKey(d);
-    const dayLog = log[key];
-    if (!dayLog) break;
-    const allTaken = medNames.every((name) => getDoseCount(log, key, name) > 0);
+    const dk = dateKey(d);
+    const dueToday = scheduled.filter((m) => isDueOnDate(m.dosage, d));
+    if (dueToday.length === 0) {
+      d.setDate(d.getDate() - 1);
+      continue;
+    }
+    const allTaken = dueToday.every((m) => getDoseCount(log, dk, m.name) > 0);
     if (allTaken) streak++;
     else break;
+    d.setDate(d.getDate() - 1);
   }
   return streak;
 }
 
 function analyzeWeeklyMeds(log: MedLog, medications: Medication[], weekDates: Date[]): WeeklyMedAnalysis[] {
   const now = new Date();
-  const elapsedDays = weekDates.filter((d) => d <= now || isToday(d)).length;
 
   return medications.map((med) => {
-    const expectedPerWeek = parseDosesPerWeek(med.dosage);
+    const expectedPerWeek = countDueInWeek(med.dosage, weekDates);
 
-    if (expectedPerWeek === 0) {
+    if (parseDosesPerWeek(med.dosage) === 0) {
       let takenThisWeek = 0;
       for (const d of weekDates) {
         takenThisWeek += getDoseCount(log, dateKey(d), med.name);
@@ -141,7 +175,6 @@ function analyzeWeeklyMeds(log: MedLog, medications: Medication[], weekDates: Da
       return { name: med.name, dosage: med.dosage, expectedPerWeek: 0, takenThisWeek, completionPct: 0, status: "as-needed" as const };
     }
 
-    // Count total doses taken this week
     let takenThisWeek = 0;
     for (const d of weekDates) {
       takenThisWeek += getDoseCount(log, dateKey(d), med.name);
@@ -149,20 +182,16 @@ function analyzeWeeklyMeds(log: MedLog, medications: Medication[], weekDates: Da
 
     const completionPct = expectedPerWeek > 0 ? Math.min(100, Math.round((takenThisWeek / expectedPerWeek) * 100)) : 0;
 
-    // Determine status based on pace
-    const expectedSoFar = Math.round((expectedPerWeek / 7) * elapsedDays);
+    const elapsedDue = weekDates.filter((d) => (d <= now || isToday(d)) && isDueOnDate(med.dosage, d));
+    const perDay = Math.max(parseDosesPerDay(med.dosage), 1);
+    const expectedSoFar = elapsedDue.length * perDay;
+
     let status: WeeklyMedAnalysis["status"];
-    if (takenThisWeek > expectedPerWeek) {
-      status = "extra";
-    } else if (takenThisWeek >= expectedPerWeek) {
-      status = "complete";
-    } else if (takenThisWeek >= expectedSoFar) {
-      status = "on-track";
-    } else if (takenThisWeek > 0) {
-      status = "behind";
-    } else {
-      status = "missed";
-    }
+    if (takenThisWeek > expectedPerWeek) status = "extra";
+    else if (takenThisWeek >= expectedPerWeek) status = "complete";
+    else if (takenThisWeek >= expectedSoFar) status = "on-track";
+    else if (takenThisWeek > 0) status = "behind";
+    else status = "missed";
 
     return { name: med.name, dosage: med.dosage, expectedPerWeek, takenThisWeek, completionPct, status };
   });
@@ -191,22 +220,33 @@ const FREQUENCY_OPTIONS_MED = [
 ];
 
 export function MedTrackerTab({ medications, onUpdateMedications }: { medications: Medication[]; onUpdateMedications?: (meds: Medication[]) => void }) {
-  const [subTab, setSubTab] = useState<"medications" | "peptides">("medications");
+  const [subTab, setSubTab] = useState<"medications" | "peptides" | "steroids" | "supplements">("medications");
   const [log, setLog] = useState<MedLog>(() => loadLog());
+  const [timings, setTimings] = useState<MedTimingMap>(() => loadTimings());
   const [weekOffset, setWeekOffset] = useState(0);
   const [addingMed, setAddingMed] = useState(false);
   const [newMedName, setNewMedName] = useState("");
   const [newMedAmount, setNewMedAmount] = useState("");
   const [newMedUnit, setNewMedUnit] = useState("mg");
   const [newMedFrequency, setNewMedFrequency] = useState("daily");
+  const [newMedTiming, setNewMedTiming] = useState<TimeOfDay>("Morning");
 
   const weekDates = getWeekDates(weekOffset);
-  const medNames = medications.map((m) => m.name);
   const todayKey = dateKey(new Date());
-  const todayLog = log[todayKey] || {};
-  const streak = getStreakCount(log, medNames);
+  const todayDate = new Date();
+  const streak = getStreakCount(log, medications);
   const adherence = getWeeklyAdherence(log, medications, weekDates);
   const weeklyAnalysis = analyzeWeeklyMeds(log, medications, weekDates);
+
+  const getTiming = (medName: string): TimeOfDay => timings[medName] || "Morning";
+
+  const setMedTiming = (medName: string, timing: TimeOfDay) => {
+    setTimings((prev) => {
+      const updated = { ...prev, [medName]: timing };
+      saveTimings(updated);
+      return updated;
+    });
+  };
 
   /** Add one dose for a med on a given day. */
   const addDose = useCallback((day: string, medName: string) => {
@@ -250,10 +290,12 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
     const dosage = newMedAmount ? `${newMedAmount}${newMedUnit} ${newMedFrequency}` : newMedFrequency;
     const updated = [...medications, { name: newMedName.trim(), dosage }];
     onUpdateMedications(updated);
+    setMedTiming(newMedName.trim(), newMedTiming);
     setNewMedName("");
     setNewMedAmount("");
     setNewMedUnit("mg");
     setNewMedFrequency("daily");
+    setNewMedTiming("Morning");
     setAddingMed(false);
   };
 
@@ -269,18 +311,26 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
     onUpdateMedications(updated);
   };
 
-  const todayDoses = medications.map((m) => ({
-    med: m,
-    dosesPerDay: parseDosesPerDay(m.dosage),
-    taken: getDoseCount(log, todayKey, m.name),
-  }));
-  const todayTaken = todayDoses.reduce((sum, d) => sum + Math.min(d.taken, Math.max(d.dosesPerDay, 1)), 0);
-  const todayTotal = todayDoses.reduce((sum, d) => sum + Math.max(d.dosesPerDay, 1), 0);
+  // Today's schedule data
+  const todaysDue = medications.filter((m) => isDueOnDate(m.dosage, todayDate));
+  const todaysTakenCount = todaysDue.filter((m) => getDoseCount(log, todayKey, m.name) >= Math.max(parseDosesPerDay(m.dosage), 1)).length;
+
+  // Group today's meds by timing
+  const groupedByTiming = TIME_OPTIONS.reduce<Record<TimeOfDay, Medication[]>>((acc, t) => {
+    acc[t] = todaysDue.filter((m) => getTiming(m.name) === t);
+    return acc;
+  }, { Morning: [], Afternoon: [], Evening: [], "Before Bed": [] });
 
   // Sub-tab bar component
+  const tabLabels: Record<typeof subTab, string> = {
+    medications: "Medications",
+    peptides: "Peptides",
+    steroids: "Steroids",
+    supplements: "Supplements",
+  };
   const subTabBar = (
     <div className="flex items-center gap-1 mb-6">
-      {(["medications", "peptides"] as const).map((tab) => (
+      {(["medications", "peptides", "steroids", "supplements"] as const).map((tab) => (
         <button
           key={tab}
           onClick={() => setSubTab(tab)}
@@ -290,7 +340,7 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
               : "text-slate-400 hover:text-slate-200 border border-transparent"
           }`}
         >
-          {tab === "medications" ? "Medications" : "Peptide Tracker"}
+          {tabLabels[tab]}
         </button>
       ))}
     </div>
@@ -303,6 +353,30 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
         <div className="max-w-4xl mx-auto">
           {subTabBar}
           <PeptideTracker />
+        </div>
+      </div>
+    );
+  }
+
+  // Steroid sub-tab
+  if (subTab === "steroids") {
+    return (
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="max-w-4xl mx-auto">
+          {subTabBar}
+          <SteroidTracker />
+        </div>
+      </div>
+    );
+  }
+
+  // Supplement sub-tab
+  if (subTab === "supplements") {
+    return (
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="max-w-4xl mx-auto">
+          {subTabBar}
+          <SupplementTracker />
         </div>
       </div>
     );
@@ -336,6 +410,10 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
     );
   }
 
+  const inputClass =
+    "w-full bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-teal-500/50 transition-colors";
+  const labelClass = "text-xs font-bold uppercase tracking-widest text-slate-500 mb-1.5 block";
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-6">
       <div className="max-w-4xl mx-auto">
@@ -349,7 +427,7 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
         {/* Stats cards */}
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="bg-teal-500/10 border border-teal-500/20 rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-teal-400">{todayTaken}/{todayTotal}</p>
+            <p className="text-2xl font-bold text-teal-400">{todaysTakenCount}/{todaysDue.length}</p>
             <p className="text-xs text-teal-400/70">Today</p>
           </div>
           <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 text-center">
@@ -362,99 +440,263 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
           </div>
         </div>
 
-        {/* Today's checklist */}
+        {/* Today's Schedule — grouped by timing */}
         <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-5 mb-6">
-          <h3 className="text-sm font-semibold text-white mb-3">Today&apos;s Medications</h3>
-          <div className="space-y-2">
-            {todayDoses.map(({ med, dosesPerDay, taken }) => {
-              const required = Math.max(dosesPerDay, 1);
-              const allDone = taken >= required;
+          <h3 className="text-sm font-semibold text-white mb-3">Today&apos;s Schedule</h3>
 
-              return (
-                <div
-                  key={med.name}
-                  className={`p-3 rounded-lg border transition-all ${
-                    allDone
-                      ? "bg-teal-500/10 border-teal-500/30"
-                      : "bg-slate-800/40 border-slate-700/30"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    {/* Med info */}
-                    <div>
-                      <p className={`text-sm font-medium transition-colors ${allDone ? "text-teal-300" : "text-slate-200"}`}>
-                        {med.name.charAt(0).toUpperCase() + med.name.slice(1)}
-                      </p>
-                      <p className="text-[11px] text-slate-500">{med.dosage}</p>
-                    </div>
+          {todaysDue.length === 0 ? (
+            <p className="text-sm text-slate-500 py-2">No medications scheduled for today.</p>
+          ) : (
+            <div className="space-y-4">
+              {TIME_OPTIONS.map((timeSlot) => {
+                const group = groupedByTiming[timeSlot];
+                if (group.length === 0) return null;
 
-                    {/* Status */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-slate-400">{taken}/{required}</span>
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                        allDone ? "bg-teal-500/20 text-teal-400" : taken > 0 ? "bg-amber-500/20 text-amber-400" : "bg-slate-700/50 text-slate-500"
-                      }`}>
-                        {allDone ? "Complete" : taken > 0 ? "In Progress" : "Pending"}
+                return (
+                  <div key={timeSlot}>
+                    {/* Time slot header */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm">{TIMING_ICONS[timeSlot]}</span>
+                      <span className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                        {timeSlot}
                       </span>
+                      <div className="flex-1 h-px bg-slate-700/30" />
+                    </div>
+
+                    <div className="space-y-2">
+                      {group.map((med) => {
+                        const dosesPerDay = Math.max(parseDosesPerDay(med.dosage), 1);
+                        const taken = getDoseCount(log, todayKey, med.name);
+                        const allDone = taken >= dosesPerDay;
+
+                        return (
+                          <div
+                            key={med.name}
+                            className={`p-3 rounded-lg border transition-all ${
+                              allDone
+                                ? "bg-teal-500/10 border-teal-500/30"
+                                : "bg-slate-800/40 border-slate-700/30"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div>
+                                <p className={`text-sm font-medium transition-colors ${allDone ? "text-teal-300" : "text-slate-200"}`}>
+                                  {med.name.charAt(0).toUpperCase() + med.name.slice(1)}
+                                </p>
+                                <p className="text-[11px] text-slate-500">
+                                  {med.dosage}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-mono text-slate-400">{taken}/{dosesPerDay}</span>
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                                  allDone ? "bg-teal-500/20 text-teal-400" : taken > 0 ? "bg-amber-500/20 text-amber-400" : "bg-slate-700/50 text-slate-500"
+                                }`}>
+                                  {allDone ? "Complete" : taken > 0 ? "In Progress" : "Pending"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Dose checkboxes */}
+                            <div className="flex items-center gap-2">
+                              {Array.from({ length: dosesPerDay }, (_, i) => {
+                                const checked = i < taken;
+                                return (
+                                  <button
+                                    key={i}
+                                    onClick={() => {
+                                      if (checked && i === taken - 1) removeDose(todayKey, med.name);
+                                      else if (!checked && i === taken) addDose(todayKey, med.name);
+                                    }}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                                      checked
+                                        ? "bg-teal-500/20 border-teal-500/30 text-teal-400"
+                                        : i === taken
+                                        ? "bg-slate-800/60 border-slate-600/50 text-slate-300 hover:border-teal-500/40 hover:bg-teal-500/5"
+                                        : "bg-slate-800/30 border-slate-700/20 text-slate-600 cursor-default"
+                                    }`}
+                                  >
+                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                      checked ? "bg-teal-500 border-teal-500" : i === taken ? "border-slate-500" : "border-slate-700"
+                                    }`}>
+                                      {checked && (
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                      )}
+                                    </div>
+                                    Dose {i + 1}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-
-                  {/* Dose checkboxes */}
-                  <div className="flex items-center gap-2">
-                    {Array.from({ length: required }, (_, i) => {
-                      const checked = i < taken;
-                      return (
-                        <button
-                          key={i}
-                          onClick={() => {
-                            if (checked && i === taken - 1) {
-                              // Uncheck the last checked dose
-                              removeDose(todayKey, med.name);
-                            } else if (!checked && i === taken) {
-                              // Check the next unchecked dose
-                              addDose(todayKey, med.name);
-                            }
-                          }}
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
-                            checked
-                              ? "bg-teal-500/20 border-teal-500/30 text-teal-400"
-                              : i === taken
-                              ? "bg-slate-800/60 border-slate-600/50 text-slate-300 hover:border-teal-500/40 hover:bg-teal-500/5"
-                              : "bg-slate-800/30 border-slate-700/20 text-slate-600 cursor-default"
-                          }`}
-                        >
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                            checked ? "bg-teal-500 border-teal-500" : i === taken ? "border-slate-500" : "border-slate-700"
-                          }`}>
-                            {checked && (
-                              <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
-                          </div>
-                          Dose {i + 1}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Progress bar */}
           <div className="mt-4">
             <div className="flex justify-between text-[10px] text-slate-500 mb-1">
               <span>Daily progress</span>
-              <span>{todayTotal > 0 ? Math.round((todayTaken / todayTotal) * 100) : 0}%</span>
+              <span>{todaysDue.length > 0 ? Math.round((todaysTakenCount / todaysDue.length) * 100) : 0}%</span>
             </div>
             <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-teal-500 rounded-full transition-all duration-300"
-                style={{ width: `${todayTotal > 0 ? (todayTaken / todayTotal) * 100 : 0}%` }}
+                style={{ width: `${todaysDue.length > 0 ? (todaysTakenCount / todaysDue.length) * 100 : 0}%` }}
               />
             </div>
           </div>
+        </div>
+
+        {/* Your Medications — management section */}
+        <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-5 mb-6">
+          <h3 className="text-sm font-semibold text-white mb-3">Your Medications</h3>
+          {medications.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {medications.map((m, i) => {
+                const match = m.dosage.match(/^([\d.]+)\s*(mg|mcg|ml|g|IU)\s*(.*)/i);
+                const amount = match ? match[1] : "";
+                const unit = match ? match[2].toLowerCase() : "mg";
+                const freq = match ? match[3].trim() : m.dosage;
+                return (
+                  <div key={`${m.name}-${i}`} className="bg-slate-800/60 border border-slate-700/30 rounded-lg px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium text-slate-200">{m.name}</p>
+                      {onUpdateMedications && (
+                        <button
+                          onClick={() => removeMedication(i)}
+                          className="text-slate-600 hover:text-red-400 transition-colors text-lg leading-none"
+                        >
+                          &times;
+                        </button>
+                      )}
+                    </div>
+                    {onUpdateMedications ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input
+                          type="number"
+                          value={amount}
+                          onChange={(e) => {
+                            const newDosage = e.target.value ? `${e.target.value}${unit} ${freq}` : freq;
+                            updateMedication(i, { dosage: newDosage });
+                          }}
+                          placeholder="0"
+                          className="w-20 bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-200 text-center focus:outline-none focus:border-teal-500/50"
+                        />
+                        <select
+                          value={unit}
+                          onChange={(e) => {
+                            const newDosage = amount ? `${amount}${e.target.value} ${freq}` : `${e.target.value} ${freq}`;
+                            updateMedication(i, { dosage: newDosage });
+                          }}
+                          className="bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-teal-500/50 cursor-pointer"
+                        >
+                          {DOSAGE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                        <select
+                          value={freq || "daily"}
+                          onChange={(e) => {
+                            const newDosage = amount ? `${amount}${unit} ${e.target.value}` : e.target.value;
+                            updateMedication(i, { dosage: newDosage });
+                          }}
+                          className="bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-teal-500/50 cursor-pointer"
+                        >
+                          {FREQUENCY_OPTIONS_MED.map((f) => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                        <select
+                          value={getTiming(m.name)}
+                          onChange={(e) => setMedTiming(m.name, e.target.value as TimeOfDay)}
+                          className="bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-teal-500/50 cursor-pointer"
+                        >
+                          {TIME_OPTIONS.map((t) => <option key={t} value={t}>{TIMING_ICONS[t]} {t}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">{m.dosage} &middot; {TIMING_ICONS[getTiming(m.name)]} {getTiming(m.name)}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add form */}
+          {onUpdateMedications && addingMed ? (
+            <div className="bg-slate-800/60 border border-slate-700/30 rounded-lg p-4 space-y-3">
+              {/* Word bank */}
+              <div>
+                <p className="text-[10px] text-slate-600 mb-2">Common medications — click to fill</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {COMMON_MEDICATIONS.map((name) => {
+                    const exists = medications.some((m) => m.name.toLowerCase() === name.toLowerCase());
+                    return (
+                      <button
+                        key={name}
+                        onClick={() => { if (!exists) setNewMedName(name); }}
+                        className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                          exists
+                            ? "bg-teal-500/20 text-teal-400 border-teal-500/30"
+                            : "bg-slate-800/60 text-slate-400 border-slate-700/50 hover:text-slate-200 hover:border-slate-600"
+                        }`}
+                      >
+                        {exists ? `${name} \u2713` : name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Medication Name</label>
+                <input type="text" value={newMedName} onChange={(e) => setNewMedName(e.target.value)} placeholder="e.g. Lisinopril" className={inputClass} autoFocus />
+              </div>
+              <div>
+                <label className={labelClass}>Dosage</label>
+                <div className="flex gap-2">
+                  <input type="number" value={newMedAmount} onChange={(e) => setNewMedAmount(e.target.value)} placeholder="e.g. 10" className={`${inputClass} flex-1`} />
+                  <select value={newMedUnit} onChange={(e) => setNewMedUnit(e.target.value)} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 transition-colors">
+                    {DOSAGE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelClass}>Frequency</label>
+                  <select value={newMedFrequency} onChange={(e) => setNewMedFrequency(e.target.value)} className={inputClass}>
+                    {FREQUENCY_OPTIONS_MED.map((f) => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Timing</label>
+                  <select value={newMedTiming} onChange={(e) => setNewMedTiming(e.target.value as TimeOfDay)} className={inputClass}>
+                    {TIME_OPTIONS.map((t) => <option key={t} value={t}>{TIMING_ICONS[t]} {t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={addMedication} className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-white text-sm font-medium rounded-lg transition-colors">
+                  Add Medication
+                </button>
+                <button onClick={() => { setAddingMed(false); setNewMedName(""); setNewMedAmount(""); setNewMedUnit("mg"); setNewMedFrequency("daily"); setNewMedTiming("Morning"); }} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : onUpdateMedications ? (
+            <button
+              onClick={() => setAddingMed(true)}
+              className="w-full py-2.5 border border-dashed border-slate-700/50 rounded-lg text-sm text-slate-500 hover:text-teal-400 hover:border-teal-500/30 transition-colors flex items-center justify-center gap-1.5"
+            >
+              <span className="text-base leading-none">+</span> Add medication
+            </button>
+          ) : null}
         </div>
 
         {/* Weekly completion analysis */}
@@ -547,7 +789,7 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
           })()}
         </div>
 
-        {/* Weekly schedule */}
+        {/* Weekly Schedule Grid */}
         <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-5 mb-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-white">Weekly Schedule</h3>
@@ -585,13 +827,13 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
           <div className="grid gap-1 mb-2" style={{ gridTemplateColumns: `140px repeat(7, 1fr)` }}>
             <div />
             {weekDates.map((d) => {
-              const today = isToday(d);
+              const td = isToday(d);
               return (
-                <div key={dateKey(d)} className={`text-center py-1.5 rounded-lg ${today ? "bg-teal-500/20" : ""}`}>
-                  <p className={`text-[10px] font-bold uppercase ${today ? "text-teal-400" : "text-slate-500"}`}>
+                <div key={dateKey(d)} className={`text-center py-1.5 rounded-lg ${td ? "bg-teal-500/20" : ""}`}>
+                  <p className={`text-[10px] font-bold uppercase ${td ? "text-teal-400" : "text-slate-500"}`}>
                     {DAY_NAMES[d.getDay()]}
                   </p>
-                  <p className={`text-xs ${today ? "text-teal-300 font-semibold" : "text-slate-400"}`}>
+                  <p className={`text-xs ${td ? "text-teal-300 font-semibold" : "text-slate-400"}`}>
                     {d.getDate()}
                   </p>
                 </div>
@@ -605,17 +847,18 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
               <div key={med.name} className="grid gap-1 items-center" style={{ gridTemplateColumns: `140px repeat(7, 1fr)` }}>
                 <div className="pr-2">
                   <p className="text-xs font-medium text-slate-300 truncate">{med.name.charAt(0).toUpperCase() + med.name.slice(1)}</p>
-                  <p className="text-[9px] text-slate-600 truncate">{med.dosage}</p>
+                  <p className="text-[9px] text-slate-600 truncate">
+                    {med.dosage} {TIMING_ICONS[getTiming(med.name)]} {getTiming(med.name)}
+                  </p>
                 </div>
                 {weekDates.map((d) => {
                   const key = dateKey(d);
                   const count = getDoseCount(log, key, med.name);
                   const isFuture = d > new Date() && !isToday(d);
-                  const today = isToday(d);
-                  const perDay = parseDosesPerDay(med.dosage);
-                  const required = Math.max(perDay, 1);
-                  const allDone = count >= required;
-                  const extra = count > required;
+                  const td = isToday(d);
+                  const due = isDueOnDate(med.dosage, d);
+                  const perDay = Math.max(parseDosesPerDay(med.dosage), 1);
+                  const allDone = count >= perDay;
 
                   return (
                     <button
@@ -625,27 +868,25 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
                       className={`aspect-square rounded-lg flex items-center justify-center transition-all ${
                         isFuture
                           ? "bg-slate-800/20 cursor-not-allowed"
-                          : extra
-                          ? "bg-red-500/20 border border-red-500/40 hover:bg-red-500/30"
                           : allDone
                           ? "bg-teal-500/30 border border-teal-500/40 hover:bg-teal-500/40"
+                          : !due
+                          ? "bg-slate-800/10 border border-slate-800/20 cursor-default"
                           : count > 0
                           ? "bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30"
-                          : today
+                          : td
                           ? "bg-slate-700/40 border border-teal-500/20 hover:bg-slate-700/60"
                           : "bg-slate-800/30 border border-slate-700/20 hover:bg-slate-700/40"
                       }`}
-                      title={extra ? `${count}/${required} doses — EXTRA` : `${count}/${required} doses`}
+                      title={`${med.name} — ${allDone ? "Taken" : due ? "Due" : "Not scheduled"}`}
                     >
-                      {extra ? (
-                        <span className="text-[9px] font-bold text-red-400">+{count - required}</span>
-                      ) : allDone ? (
+                      {allDone ? (
                         <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-teal-400" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                         </svg>
                       ) : count > 0 ? (
                         <span className="text-[9px] font-bold text-amber-400">{count}</span>
-                      ) : isFuture ? (
+                      ) : isFuture || !due ? (
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
                       ) : (
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
@@ -668,12 +909,12 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
               <span className="text-[10px] text-slate-500">Partial</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-red-500/20 border border-red-500/40" />
-              <span className="text-[10px] text-slate-500">Extra</span>
-            </div>
-            <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded bg-slate-800/30 border border-slate-700/20" />
               <span className="text-[10px] text-slate-500">Missed</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded bg-slate-800/10 border border-slate-800/20" />
+              <span className="text-[10px] text-slate-500">Not Scheduled</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded bg-slate-800/20" />
@@ -682,7 +923,7 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
           </div>
         </div>
 
-        {/* Monthly overview */}
+        {/* Last 30 Days Heatmap */}
         <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-white mb-3">Last 30 Days</h3>
           <div className="flex gap-0.5 flex-wrap">
@@ -690,18 +931,14 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
               const d = new Date();
               d.setDate(d.getDate() - (29 - i));
               const key = dateKey(d);
-              let totalExpected = 0;
-              let totalTaken = 0;
-              for (const med of medications) {
-                const perDay = parseDosesPerDay(med.dosage);
-                const required = Math.max(perDay, 1);
-                totalExpected += required;
-                totalTaken += Math.min(getDoseCount(log, key, med.name), required);
-              }
+              const scheduled = medications.filter((m) => isDueOnDate(m.dosage, d) && parseDosesPerWeek(m.dosage) > 0);
+              const totalExpected = scheduled.length;
+              const totalTaken = scheduled.filter((m) => getDoseCount(log, key, m.name) >= Math.max(parseDosesPerDay(m.dosage), 1)).length;
               const ratio = totalExpected > 0 ? totalTaken / totalExpected : 0;
 
               let colorClass = "bg-slate-800/40";
-              if (ratio === 1) colorClass = "bg-teal-500";
+              if (totalExpected === 0) colorClass = "bg-slate-800/20";
+              else if (ratio === 1) colorClass = "bg-teal-500";
               else if (ratio >= 0.5) colorClass = "bg-teal-500/50";
               else if (ratio > 0) colorClass = "bg-teal-500/20";
 
@@ -709,7 +946,7 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
                 <div
                   key={key}
                   className={`w-4 h-4 rounded-sm ${colorClass} transition-colors`}
-                  title={`${key}: ${totalTaken}/${totalExpected} doses`}
+                  title={`${key}: ${totalTaken}/${totalExpected} medications`}
                 />
               );
             })}
@@ -732,135 +969,6 @@ export function MedTrackerTab({ medications, onUpdateMedications }: { medication
               <span className="text-[9px] text-slate-600">All</span>
             </div>
           </div>
-        </div>
-
-        {/* Your Medications — management section */}
-        <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-5 mt-6">
-          <h3 className="text-sm font-semibold text-white mb-3">Your Medications</h3>
-          {medications.length > 0 && (
-            <div className="space-y-2 mb-4">
-              {medications.map((m, i) => {
-                const match = m.dosage.match(/^([\d.]+)\s*(mg|mcg|ml|g|IU)\s*(.*)/i);
-                const amount = match ? match[1] : "";
-                const unit = match ? match[2].toLowerCase() : "mg";
-                const freq = match ? match[3].trim() : m.dosage;
-                return (
-                  <div key={`${m.name}-${i}`} className="bg-slate-800/60 border border-slate-700/30 rounded-lg px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-slate-200">{m.name}</p>
-                      {onUpdateMedications && (
-                        <button
-                          onClick={() => removeMedication(i)}
-                          className="text-slate-600 hover:text-red-400 transition-colors text-lg leading-none"
-                        >
-                          &times;
-                        </button>
-                      )}
-                    </div>
-                    {onUpdateMedications ? (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <input
-                          type="number"
-                          value={amount}
-                          onChange={(e) => {
-                            const newDosage = e.target.value ? `${e.target.value}${unit} ${freq}` : freq;
-                            updateMedication(i, { dosage: newDosage });
-                          }}
-                          placeholder="0"
-                          className="w-20 bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-200 text-center focus:outline-none focus:border-teal-500/50"
-                        />
-                        <select
-                          value={unit}
-                          onChange={(e) => {
-                            const newDosage = amount ? `${amount}${e.target.value} ${freq}` : `${e.target.value} ${freq}`;
-                            updateMedication(i, { dosage: newDosage });
-                          }}
-                          className="bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-teal-500/50 cursor-pointer"
-                        >
-                          {DOSAGE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                        <select
-                          value={freq || "daily"}
-                          onChange={(e) => {
-                            const newDosage = amount ? `${amount}${unit} ${e.target.value}` : e.target.value;
-                            updateMedication(i, { dosage: newDosage });
-                          }}
-                          className="bg-slate-800/80 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-teal-500/50 cursor-pointer"
-                        >
-                          {FREQUENCY_OPTIONS_MED.map((f) => <option key={f} value={f}>{f}</option>)}
-                        </select>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-500">{m.dosage}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Add form */}
-          {onUpdateMedications && addingMed ? (
-            <div className="bg-slate-800/60 border border-slate-700/30 rounded-lg p-4 space-y-3">
-              {/* Word bank */}
-              <div>
-                <p className="text-[10px] text-slate-600 mb-2">Common medications — click to fill</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {COMMON_MEDICATIONS.map((name) => {
-                    const exists = medications.some((m) => m.name.toLowerCase() === name.toLowerCase());
-                    return (
-                      <button
-                        key={name}
-                        onClick={() => { if (!exists) setNewMedName(name); }}
-                        className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                          exists
-                            ? "bg-teal-500/20 text-teal-400 border-teal-500/30"
-                            : "bg-slate-800/60 text-slate-400 border-slate-700/50 hover:text-slate-200 hover:border-slate-600"
-                        }`}
-                      >
-                        {exists ? `${name} \u2713` : name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-1.5 block">Medication Name</label>
-                <input type="text" value={newMedName} onChange={(e) => setNewMedName(e.target.value)} placeholder="e.g. Lisinopril" className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-teal-500/50 transition-colors" autoFocus />
-              </div>
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-1.5 block">Dosage</label>
-                <div className="flex gap-2">
-                  <input type="number" value={newMedAmount} onChange={(e) => setNewMedAmount(e.target.value)} placeholder="e.g. 10" className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-teal-500/50 transition-colors" />
-                  <select value={newMedUnit} onChange={(e) => setNewMedUnit(e.target.value)} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 transition-colors">
-                    {DOSAGE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-1.5 block">Frequency</label>
-                <select value={newMedFrequency} onChange={(e) => setNewMedFrequency(e.target.value)} className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 transition-colors">
-                  {FREQUENCY_OPTIONS_MED.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </div>
-              <div className="flex gap-2 pt-1">
-                <button onClick={addMedication} className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-white text-sm font-medium rounded-lg transition-colors">
-                  Add Medication
-                </button>
-                <button onClick={() => { setAddingMed(false); setNewMedName(""); setNewMedAmount(""); setNewMedUnit("mg"); setNewMedFrequency("daily"); }} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : onUpdateMedications ? (
-            <button
-              onClick={() => setAddingMed(true)}
-              className="w-full py-2.5 border border-dashed border-slate-700/50 rounded-lg text-sm text-slate-500 hover:text-teal-400 hover:border-teal-500/30 transition-colors flex items-center justify-center gap-1.5"
-            >
-              <span className="text-base leading-none">+</span> Add medication
-            </button>
-          ) : null}
         </div>
 
         <div className="h-12" />

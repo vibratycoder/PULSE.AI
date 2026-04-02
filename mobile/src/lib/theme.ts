@@ -1,0 +1,43 @@
+export const colors = {
+  bg: "#0b1929",
+  bgCard: "#0a1628",
+  bgInput: "rgba(30, 41, 59, 0.6)",
+  border: "rgba(51, 65, 85, 0.5)",
+  teal: "#14b8a6",
+  tealDark: "#0d9488",
+  tealLight: "#5eead4",
+  white: "#ffffff",
+  text: "#e2e8f0",
+  textSecondary: "#94a3b8",
+  textMuted: "#64748b",
+  textDim: "#475569",
+  red: "#ef4444",
+  redBg: "rgba(127, 29, 29, 0.5)",
+  redBorder: "#b91c1c",
+  amber: "#f59e0b",
+  green: "#22c55e",
+  blue: "#3b82f6",
+  purple: "#a855f7",
+  pink: "#ec4899",
+  orange: "#f97316",
+  cyan: "#06b6d4",
+  yellow: "#eab308",
+  rose: "#f43f5e",
+};
+
+export const CATEGORY_COLORS: Record<
+  string,
+  { bar: string; text: string }
+> = {
+  Metabolic: { bar: colors.blue, text: "#60a5fa" },
+  Lipid: { bar: colors.amber, text: "#fbbf24" },
+  CBC: { bar: colors.rose, text: "#fb7185" },
+  Thyroid: { bar: colors.purple, text: "#c084fc" },
+  Liver: { bar: colors.green, text: "#4ade80" },
+  Kidney: { bar: colors.orange, text: "#fb923c" },
+  Vitamin: { bar: colors.yellow, text: "#facc15" },
+  Hormone: { bar: colors.pink, text: "#f472b6" },
+  Iron: { bar: colors.red, text: "#f87171" },
+  Inflammation: { bar: colors.cyan, text: "#22d3ee" },
+  Other: { bar: "#64748b", text: "#94a3b8" },
+};

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { dateKey, isToday, getWeekDates, DAY_NAMES } from "./utils";
 
 type DosageUnit = "mcg" | "mg" | "IU" | "ml";
 type TimeOfDay = "Morning" | "Afternoon" | "Evening" | "Before Bed";
@@ -55,17 +56,6 @@ const FREQUENCY_OPTIONS = [
   "5 days on / 2 off", "As needed",
 ];
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function isToday(d: Date): boolean {
-  const t = new Date();
-  return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
-}
-
 function loadLog(): PeptideLog {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -92,19 +82,6 @@ function loadPeptides(): PeptideEntry[] {
 
 function savePeptides(entries: PeptideEntry[]) {
   localStorage.setItem(PEPTIDES_KEY, JSON.stringify(entries));
-}
-
-function getWeekDates(weekOffset: number): Date[] {
-  const today = new Date();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay() + weekOffset * 7);
-  const dates: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(startOfWeek);
-    d.setDate(startOfWeek.getDate() + i);
-    dates.push(d);
-  }
-  return dates;
 }
 
 /** Is a peptide scheduled on a given date based on its frequency? */

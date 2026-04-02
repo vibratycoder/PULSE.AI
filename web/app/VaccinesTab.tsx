@@ -1,12 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { findVaccineInfo, VaccineInfo } from "./vaccineData";
-
-interface Vaccine {
-  name: string;
-  date: string;
-}
+import { findVaccineInfo, VaccineInfo } from "./data/vaccineData";
+import type { Vaccine } from "./types";
 
 const COMMON_VACCINES = [
   "COVID-19",

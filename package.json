@@ -1,0 +1,20 @@
+{
+  "name": "pulseai",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix web",
+    "build": "npm run build --prefix web",
+    "start": "npm run start --prefix web",
+    "mobile": "npm run start --prefix mobile",
+    "mobile:android": "npm run android --prefix mobile",
+    "mobile:ios": "npm run ios --prefix mobile"
+  },
+  "dependencies": {
+    "expo": "^55.0.9"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "typescript": "~5.9.2"
+  }
+}

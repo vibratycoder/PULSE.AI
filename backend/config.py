@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     pubmed_email: str = ""
     supabase_url: str = ""
     supabase_key: str = ""
+    garmin_consumer_key: str = ""
+    garmin_consumer_secret: str = ""
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "info"

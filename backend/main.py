@@ -9,6 +9,7 @@ from backend.api.bloodwork import router as bloodwork_router
 from backend.api.chat import router as chat_router
 from backend.api.evidence import router as evidence_router
 from backend.api.profile import router as profile_router
+from backend.api.garmin import router as garmin_router
 from backend.api.upload import router as upload_router
 from backend.config import settings
 
@@ -30,7 +31,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:19006"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +40,7 @@ app.add_middleware(
 app.include_router(bloodwork_router)
 app.include_router(chat_router)
 app.include_router(evidence_router)
+app.include_router(garmin_router)
 app.include_router(profile_router)
 app.include_router(upload_router)
 

@@ -134,20 +134,39 @@ function LabCard({ lab }: { lab: LabValue }) {
 
       <RangeBar lab={lab} />
 
-      {expanded && (
-        <div className="mt-6 pt-3 border-t border-slate-700/30 space-y-2">
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-500">% through normal range</span>
-            <span className={`font-mono ${status.text}`}>{pctOfNormal.toFixed(0)}%</span>
+      {expanded && (() => {
+        const recs = lab.flag ? getLabRecommendations(lab) : [];
+        return (
+          <div className="mt-6 pt-3 border-t border-slate-700/30 space-y-2">
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">% through normal range</span>
+              <span className={`font-mono ${status.text}`}>{pctOfNormal.toFixed(0)}%</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Distance from midpoint</span>
+              <span className="text-slate-300 font-mono">
+                {(lab.value - (lab.normal_low + lab.normal_high) / 2).toFixed(1)} {lab.unit}
+              </span>
+            </div>
+            {recs.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-700/30">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Recommendations</p>
+                <ul className="space-y-1.5">
+                  {recs.map((rec, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
+                      <span className="text-teal-400 mt-0.5 shrink-0">&#8226;</span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-slate-600 mt-3 leading-relaxed">
+                  For informational purposes only — consult your healthcare provider before making changes.
+                </p>
+              </div>
+            )}
           </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-500">Distance from midpoint</span>
-            <span className="text-slate-300 font-mono">
-              {(lab.value - (lab.normal_low + lab.normal_high) / 2).toFixed(1)} {lab.unit}
-            </span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -435,72 +454,6 @@ function getLabRecommendations(lab: LabValue): string[] {
   return FALLBACK_RECOMMENDATIONS[direction];
 }
 
-function RecommendationsView({ results }: { results: LabValue[] }) {
-  const abnormal = results.filter((r) => r.flag);
-
-  if (abnormal.length === 0) {
-    return (
-      <div className="text-center py-16">
-        <div className="text-4xl mb-3">&#10003;</div>
-        <h3 className="text-lg font-semibold text-green-400 mb-2">All Values Normal</h3>
-        <p className="text-sm text-slate-400 max-w-md mx-auto">
-          Your lab results are all within normal reference ranges. Keep up the good work with your current health habits!
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {abnormal.map((lab) => {
-        const recs = getLabRecommendations(lab);
-        const statusColor = lab.flag === "high" ? "text-red-400" : "text-amber-400";
-        const borderColor = lab.flag === "high" ? "border-red-500/20" : "border-amber-500/20";
-        const badgeBg = lab.flag === "high" ? "bg-red-500/10" : "bg-amber-500/10";
-        return (
-          <div key={lab.name} className={`bg-slate-800/40 border ${borderColor} rounded-xl p-5`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-semibold text-slate-200`}>{lab.name}</span>
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${badgeBg} ${statusColor}`}>
-                  {lab.flag}
-                </span>
-              </div>
-              <span className={`text-sm font-mono font-bold ${statusColor}`}>
-                {lab.value} {lab.unit}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Normal range: {lab.normal_low} — {lab.normal_high} {lab.unit}
-            </p>
-            {recs.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Recommendations</p>
-                <ul className="space-y-1.5">
-                  {recs.map((rec, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
-                      <span className="text-teal-400 mt-0.5 shrink-0">&#8226;</span>
-                      <span>{rec}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Disclaimer */}
-      <div className="bg-slate-800/30 border border-slate-700/20 rounded-xl p-4 mt-2">
-        <p className="text-xs text-slate-500 leading-relaxed">
-          <span className="font-semibold text-slate-400">Disclaimer: </span>
-          These recommendations are for educational and informational purposes only and do not constitute medical advice, diagnosis, or treatment. Lab results should always be interpreted by a qualified healthcare professional in the context of your complete medical history. Do not make changes to medications, supplements, or treatment plans without consulting your doctor. If you have concerns about any result, please schedule an appointment with your healthcare provider.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 const STORAGE_KEY = "pulseai_bloodwork";
 
 function loadSavedBloodwork(): BloodworkData | null {
@@ -522,7 +475,7 @@ export function BloodWorkTab({ onResults }: { onResults?: (results: LabValue[]) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [filterView, setFilterView] = useState<"all" | "abnormal" | "recommendations">("all");
+  const [filterView, setFilterView] = useState<"all" | "abnormal">("all");
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -716,41 +669,25 @@ export function BloodWorkTab({ onResults }: { onResults?: (results: LabValue[]) 
           >
             Abnormal ({data!.results.filter((r) => r.flag).length})
           </button>
-          <button
-            onClick={() => setFilterView("recommendations")}
-            className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
-              filterView === "recommendations"
-                ? "bg-purple-500/80 text-white"
-                : "bg-slate-800/40 text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Recommendations
-          </button>
         </div>
 
-        {filterView === "recommendations" ? (
-          <RecommendationsView results={data!.results} />
-        ) : (
-          <>
-            <CategoryFilter
-              categories={allCategories}
-              active={activeCategories}
-              onToggle={toggleCategory}
-            />
+        <CategoryFilter
+          categories={allCategories}
+          active={activeCategories}
+          onToggle={toggleCategory}
+        />
 
-            {/* Lab cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filtered.map((lab) => (
-                <LabCard key={lab.name} lab={lab} />
-              ))}
-            </div>
+        {/* Lab cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {filtered.map((lab) => (
+            <LabCard key={lab.name} lab={lab} />
+          ))}
+        </div>
 
-            {filtered.length === 0 && (
-              <p className="text-center text-slate-500 py-12">
-                No results match current filters.
-              </p>
-            )}
-          </>
+        {filtered.length === 0 && (
+          <p className="text-center text-slate-500 py-12">
+            No results match current filters.
+          </p>
         )}
 
         {/* Bottom spacing */}
